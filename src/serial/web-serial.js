@@ -1,4 +1,6 @@
-
+/*
+https://github.com/makeabilitylab/p5js/blob/master/_libraries/serial.js
+*/
 class WebSerial{
     constructor(){        
         this.serialPort = null;
@@ -19,11 +21,39 @@ class WebSerial{
    */
   async connect(baudRate) {    
         // if the user does not pass in an existing port 
-      this.serialPort = await navigator.serial.requestPort({});            
-      var speed = parseInt(baudRate);      
-      await this.serialPort.open({ baudRate: speed});               
+      
+      try{
+        this.serialPort = await navigator.serial.requestPort({});            
+        var speed = parseInt(baudRate);      
+        await this.serialPort.open({ baudRate: speed});               
+        return true
+      }catch{
+        return false;
+      }
+      
   }
-  async readLoop(){
+  async writeLine(data) {
+    this.write(data + "\n");
+  }
+
+  /**
+   * Writes out data as text
+   * @param {*} data 
+   */
+  async write(data) {
+    this.serialWriter.write(data);
+  }  
+  // async serialWrite(data) {
+	// 	const encoder = new TextEncoder();
+	// 	const dataArrayBuffer = encoder.encode(data);
+
+	// 	if (this.serialPort && this.serialPort.writable) {
+	// 		const writer = this.serialPort.writable.getWriter();
+	// 		writer.write(dataArrayBuffer);
+	// 		writer.releaseLock();
+	// 	}
+	// }  
+  async readLoop(onReceive){
       // Setup serial output stream as text
 
       const textEncoder = new TextEncoderStream();
@@ -51,7 +81,8 @@ class WebSerial{
               }
   
               if (value) {
-                console.log("Serial received:", value);                
+                //console.log("Serial received:", value);                
+                onReceive(value);
               }
             }
   
@@ -68,8 +99,34 @@ class WebSerial{
 
   }
   async close(){    
-    await this.serialPort.close();
-    this.serialPort = null;
+  
+    if (this.serialReader) {
+      console.log("Closing this.serialReader");
+
+      // from https://reillyeon.github.io/serial/#close-method
+      this.keepReading = false;
+      this.serialReader.cancel();
+
+      await this.readableStreamClosed.catch(() => { /* Ignore the error */ });
+      this.serialReader = null;
+      this.readableStreamClosed = null;
+    }
+    if (this.serialWriter) {
+      console.log("Closing this.serialWriter");
+     
+      await this.serialWriter.close();
+      await this.writableStreamClosed;
+
+      this.serialWriter = null;
+      this.writableStreamClosed = null;
+    }
+
+    if (this.serialPort) {
+      console.log("Closing this.serialPort");
+
+      await this.serialPort.close();
+      this.serialPort = null;
+    }  
   }
     
 }
@@ -84,7 +141,7 @@ class LineBreakTransformer {
     // Append new chunks to existing chunks.
     this.chunks += chunk;
     // For each line breaks in chunks, send the parsed lines out.
-    const lines = this.chunks.split("\r\n");
+    const lines = this.chunks.split("\n");
     this.chunks = lines.pop();
     lines.forEach((line) => controller.enqueue(line));
   }
