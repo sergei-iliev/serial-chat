@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Serial Chat</title>
+
+    <link type="text/css" rel="stylesheet" href="https://unpkg.com/bootstrap/dist/css/bootstrap.min.css" />
+	<link type="text/css" rel="stylesheet" href="https://unpkg.com/bootstrap-vue@latest/dist/bootstrap-vue.min.css" />
+
+<!-- Load polyfills to support older browsers -->
+	<script src="https://polyfill.io/v3/polyfill.min.js?features=es2015%2CIntersectionObserver" crossorigin="anonymous"></script>
+
+<!-- Load Vue followed by BootstrapVue -->
+	<script src="https://unpkg.com/vue@2.6.12/dist/vue.min.js"></script>
+	<script src="https://unpkg.com/bootstrap-vue@latest/dist/bootstrap-vue.min.js"></script>
+
+<!-- Load the following for BootstrapVueIcons support -->
+	<script src="https://unpkg.com/bootstrap-vue@latest/dist/bootstrap-vue-icons.min.js"></script>
+
+    <!-- Axios rest -->
+    <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+    <!-- /moment -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.1/moment.min.js" type="text/javascript"></script>
+
+    <script src="src/serial/web-serial.js" type="text/javascript"></script>
+
+
+</head>
+<body>
+<div id="app">
+    <b-navbar toggleable="sm" type="dark" :variant="production">
+        <b-navbar-brand href="/production/print-label.html">
+            <img src="/assets/smile.png" class="d-inline-block align-top" height="30">
+            Mask Resource Planning
+        </b-navbar-brand>
+        <b-navbar-nav>
+            <b-nav-item href="/production/print-label.html">Print labels</b-nav-item>
+            <b-nav-item href="/production/planning.html">Planning</b-nav-item>
+        </b-navbar-nav>
+    </b-navbar>
+    <div><strong>Production Orders</strong></div>
+    <div><b-button variant="outline-primary" v-on:click="connect">Connect</b-button></div>
+    <div><b-button variant="outline-primary" v-on:click="send">Send</b-button></div>
+    <b-row class="mt-2"><b-col>
+    <b-table ref="table" hover sticky-header
+             :items="productionOrders"
+             :fields="fields"
+             @row-clicked="edit">
+        <template #cell(operations)="data">
+            <div v-if="data.item.orderStatus=='planned'">
+                <b-button variant="outline-primary" @click="activate(data.item)">Activate</b-button>
+            </div>
+        </template>
+    </b-table>
+    </b-col>
+    </b-row>
+    <b-modal id="opDialog"  :title="productionOrder.id==null?'Create':'Edit'"
+             @cancel="onReset"
+             @close="onReset"
+             @ok="handleOk"
+    >
+        <b-row class="justify-content-md-center mt-5"><b-col cols="4" md="auto">
+            <b-form ref="form" class="needs-validation" novalidate>
+                <b-form-group  label="Start Date" label-for="input-2">
+                    <b-form-datepicker
+                            id="input-2"
+                            v-model="productionOrder.startDate"
+                            :date-format-options="{ year: 'numeric', month: 'short', day: '2-digit', weekday: 'short' }"
+                    ></b-form-datepicker>
+                </b-form-group>
+                <b-form-group  label="Delivery Date" label-for="input-3">
+                    <b-form-datepicker
+                            id="input-3"
+                            v-model="productionOrder.deliveryDate"
+                            :date-format-options="{ year: 'numeric', month: 'short', day: '2-digit', weekday: 'short' }"
+                    ></b-form-datepicker>
+                </b-form-group>
+                <b-form-group  label="Planned Volume" label-for="input-4">
+                    <b-form-input
+                            id="input-4"
+                            v-model="productionOrder.plannedVolume"
+                            required
+                            type="number"
+                    ></b-form-input>
+                </b-form-group>
+                <b-form-group>
+                    <b-form-checkbox
+                            id="input-6"
+                            v-model="productionOrder.orderToStock"
+                            name="checkbox-1"
+                            value=true
+                            unchecked-value=false
+                            @change="toggleCustomerName(productionOrder)">Order to Stock</b-form-checkbox>
+                </b-form-group>
+                <b-form-group  label="Customer" label-for="input-5">
+                    <b-form-input
+                            id="input-5"
+                            v-model="productionOrder.customerName"
+                            :disabled="productionOrder.orderToStock=='true'"
+                    ></b-form-input>
+                </b-form-group>
+                <b-form-group  label="Customer reference" label-for="input-5">
+                    <b-form-input
+                            id="input-5"
+                            v-model="productionOrder.customerReference"
+                            :disabled="productionOrder.orderToStock=='true'"
+                    ></b-form-input>
+                </b-form-group>
+                <b-form-group  label="Article" label-for="input-8">
+                    <b-form-select id="input-8" v-model="productionOrder.article" :options="articles" required></b-form-select>
+                </b-form-group>
+                <b-form-group  label="Package" label-for="input-9">
+                    <b-form-select id="input-9" v-model="productionOrder.package" :options="packages" required></b-form-select>
+                </b-form-group>
+                <b-form-group  label="Production Lines" label-for="input-10">
+                    <b-form-select id="input-10" v-model="productionOrder.plannedProductionLines" :options="productionLines" multiple :select-size="4"></b-form-select>
+                </b-form-group>
+            </b-form>
+        </b-col>
+        </b-row>
+    </b-modal>
+</div>
+<script>
+var vm = new Vue({
+  el:"#app",
+  data: {
+      fields: [
+          { key: 'id', label: '#', sortable: true },
+          { key: 'startDate', label: 'Start Date',
+              formatter: value => {
+                  return moment(value).format('YYYY-MM-DD');
+              },  sortable: true },
+          { key: 'deliveryDate', label: 'Delivery Date',
+              formatter: value => {
+                  return moment(value).format('YYYY-MM-DD');
+              }, sortable: true },
+          { key: 'orderToStock', label: 'Destination',
+              formatter: (value, key, item) => {
+                  if (value) return 'Stock'; else return item.customerName;
+              }, sortable: true },
+          { key: 'plannedVolume', label: 'Planned Volume', sortable: false },
+          { key: 'realizedVolume', label: 'Realized Volume',
+              formatter: (value, key, item)  => {
+                  if(this.realizedVolumeMap!=null){
+                    return this.realizedVolumeMap[item.id];
+                  }
+                  return 0;
+              },
+               sortable: false },
+          { key: 'plannedProductionLines',label: 'Production lines',
+              formatter: value => {
+                  return value.map(v=>v.code).join();
+              },
+             sortable: false },
+          { key: 'orderStatus', label: 'Status', sortable: true },
+          { key: 'operations', label: 'Operations', sortable: false }
+        ],
+        productionOrder: {},
+        productionOrders: null,
+        productionLines: null,
+        realizedVolumeMap: null,
+        articles: null,
+        packages: null,
+		port:null,
+		webserial:new WebSerial(),
+  },
+  methods: {
+      toggleCustomerName(value){
+        if(value.orderToStock=='true'){
+            value.customerName=null;
+        }
+      },
+	
+	async  getReader() {	    
+        this.port = await navigator.serial.requestPort({});		
+		await this.port.open({ baudRate:9600});
+
+        const appendStream = new WritableStream({
+          write(chunk) {
+		    console.log(chunk);	        
+          }
+        });
+
+        this.port.readable
+          .pipeThrough(new TextDecoderStream())
+          .pipeTo(appendStream);
+		 		
+
+      },
+	  async serialWrite(data) {
+		const encoder = new TextEncoder();
+		const dataArrayBuffer = encoder.encode(data);
+
+		if (this.port && this.port.writable) {
+			const writer = this.port.writable.getWriter();
+			writer.write(dataArrayBuffer);
+			writer.releaseLock();
+		}
+	  },	  
+      fetchOLD: function() {
+          var uri = '/api/v1/production_orders';
+          axios.get(uri)
+            .then(response => {
+                this.productionOrders = response.data;
+                console.log("Fetched production orders " + this.productionOrders.length);
+                let ids = this.productionOrders.map(p => p.id);
+                let uri='/api/v1/production_orders/volume/realized';
+                return axios.post(uri,ids);
+            }).then(response=>{
+                this.realizedVolumeMap = response.data;
+                console.log("Fetched production volume");
+            }).catch(error => {
+                console.log("submit post " + uri + " failed " + error);
+                this.$bvToast.toast('Retrieving serial numbers - failed', {title: 'Connection issue', autoHideDelay: 5000, variant: 'danger'});
+            });
+
+          if (this.articles == null) {
+            var uri = '/api/v1/articles';
+            axios.get(uri)
+              .then(response => {
+                  this.articles = response.data.map(function(item) {
+                      return { text: item['code'], value: item};
+                  });
+                  console.log("Fetched articles " + this.articles.length);
+              })
+              .catch(error => {
+                  console.log("submit post " + uri + " failed " + error);
+                  this.$bvToast.toast('Retrieving serial numbers - failed', {title: 'Connection issue', autoHideDelay: 5000, variant: 'danger'});
+              });
+          }
+
+          if (this.packages == null) {
+            var uri = '/api/v1/packages';
+            axios.get(uri)
+               .then(response => {
+                  this.packages = response.data.map(function(item) {
+                      return { text: item['code'], value: item};
+                  });
+                  console.log("Fetched packages " + this.packages.length);
+              })
+              .catch(error => {
+                  console.log("submit post " + uri + " failed " + error);
+                  this.$bvToast.toast('Retrieving serial numbers - failed', {title: 'Connection issue', autoHideDelay: 5000, variant: 'danger'});
+              });
+          }
+
+          if (this.productionLines == null) {
+            var uri='/api/v1/production_lines';
+            axios.get(uri)
+              .then(response => {
+                 this.productionLines = response.data.map(function(item) {
+                    return { text: item['code'], value: item};
+                 });
+              })
+              .catch(error => {
+                 console.log("submit post " + uri + " failed " + error);
+                 this.$bvToast.toast('Retrieving serial numbers - failed', {title: 'Connection issue', autoHideDelay: 5000, variant: 'danger'});
+              });
+          }
+      },
+      connect(){
+         //this.resetForm();
+         //this.$bvModal.show("opDialog");
+		 this.webserial.connect(9600);
+		 //this.getReader();
+
+      },
+	  send(){
+	    this.serialWrite('M');
+	  },
+      edit(item,index,event){
+         this.productionOrder=item;
+         this.$bvModal.show("opDialog");
+      },
+      handleOk(evt) {
+        // Prevent modal from closing
+        evt.preventDefault()
+        // Trigger submit handler
+        this.onSubmit()
+      },
+      onSubmit(evt) {
+         var uri = '/api/v1/production_orders';
+         axios.post(uri, this.productionOrder)
+         .then(response => {
+                this.$bvModal.hide("opDialog");
+                //refresh grid
+                this.fetch();
+          })
+          .catch(error => {
+                const h = this.$createElement;
+                let nodes=[];
+                for(let i in error.response.data.errors){
+                 var node = h(
+                 'p',
+                    { class: ['text-center', 'mb-0'] },
+                    [
+                    error.response.data.errors[i]
+                    ],
+                    );
+                  nodes.push(node);
+                }
+                this.$bvToast.toast(nodes,
+                {title: 'Connection issue', autoHideDelay: 5000, variant: 'danger'});
+            });
+      },
+      onReset(evt) {
+        this.resetForm();
+        this.formVisible = false
+      },
+      resetForm(){
+        // Reset our form values
+        this.productionOrder={id:null,article:null,package:null,plannedProductionLines:[]}
+      },
+      activate(productionOrder){
+         var uri = '/api/v1/production_orders/activate';
+         axios.post(uri, productionOrder)
+         .then(response => {
+                //refresh grid
+                this.fetch();
+          })
+          .catch(error => {
+                console.log("submit get " + uri + " failed " + error);
+                this.$bvToast.toast('Retrieving production sites - failed', {title: 'Connection issue', autoHideDelay: 5000, variant: 'danger'});
+            });
+      }
+  },
+  computed: {
+    production: function() {
+      return window.location.href.startsWith('https://mrp.') ? "info" : "success";
+    }
+  },
+  mounted() {
+     //this.fetch();
+     //this.timerId = setInterval(() => this.fetch(), 30000);
+  }
+});
+</script>
+</body>
+</html>
